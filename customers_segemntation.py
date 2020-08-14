@@ -17,7 +17,7 @@ from plotly.subplots import make_subplots
 ##################################################################
 #                      Functions Area                            #
 ##################################################################
-# <editor-fold desc="Functions Area">
+
 # ***************************************************
 # ******            normalizer Function        ******
 # ***************************************************
@@ -53,9 +53,6 @@ def elbow_method(df, test_clusters=10):
 
     return distortions
 
-
-# </editor-fold>
-
 ##################################################################
 #                      Main Area                                 #
 ##################################################################
@@ -67,7 +64,6 @@ data_path = 'data/'
 # ***************************************************
 # ******            Load Data                  ******
 # ***************************************************
-# <editor-fold desc="Load Data">
 # -------------------------------
 # 1. Load data
 # https://archive.ics.uci.edu/ml/datasets/online+retail#
@@ -81,12 +77,9 @@ data_table.head()
 # 3. Summary of the numeric data_table's columns
 data_table.describe()
 
-# </editor-fold>
-
 # ***************************************************
 # ******  Data Cleaning & Feature Engineering  ******
 # ***************************************************
-# <editor-fold desc="Data Cleaning & Feature Engineering">
 # -------------------------------
 # 1. Convert type
 data_table["InvoiceDate"] = data_table["InvoiceDate"].dt.date
@@ -98,14 +91,12 @@ data_table["total_price"] = data_table["Quantity"] * data_table["UnitPrice"]
 # -------------------------------
 # 3. Create date variable that records recency
 snapshot_date = max(data_table.InvoiceDate) + datetime.timedelta(days=1)
-
-# Aggregate data by each customer
+# 3.A. Aggregate data by each customer
 customers_data = data_table.groupby(['CustomerID']).agg({
     'InvoiceDate': lambda x: (snapshot_date - x.max()).days,
     'InvoiceNo': 'count',
     'total_price': 'sum'})
-
-# Rename columns
+# 3.B. Rename columns
 customers_data.rename(columns={'InvoiceDate': 'day_to_invoice',
                                'InvoiceNo': 'count_products',
                                'total_price': 'monetary_value'}, inplace=True)
@@ -236,4 +227,4 @@ customers_data_norm_melt = pd.melt(customers_data_norm.reset_index(),
 # 2.B. Visualize melted data
 sns.lineplot('feature', 'value', hue='cluster', data=customers_data_norm_melt)
 
-# </editor-fold>
+
