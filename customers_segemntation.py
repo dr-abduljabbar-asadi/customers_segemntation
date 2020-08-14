@@ -3,7 +3,6 @@
 ##################################################################
 import pandas as pd
 import numpy as np
-from datetime import datetime
 import datetime
 from scipy import stats
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
@@ -12,6 +11,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from plotly.offline import plot
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
 
 ##################################################################
 #                      Functions Area                            #
@@ -27,9 +28,9 @@ def normalizer(df, norm_type='StandardScaler'):
         normalizer = MinMaxScaler()
     # fit and transform the data table df
     normalizer.fit(df)
-    df_normalized=pd.DataFrame( normalizer.transform(df))
-    df_normalized.columns=df.columns
-    df_normalized.index=df.index
+    df_normalized = pd.DataFrame(normalizer.transform(df))
+    df_normalized.columns = df.columns
+    df_normalized.index = df.index
     return df_normalized
 
 
@@ -68,7 +69,7 @@ data_path = 'data/'
 # ***************************************************
 # <editor-fold desc="Load Data">
 # -------------------------------
-# 1. Load  Data
+# 1. Load data
 # https://archive.ics.uci.edu/ml/datasets/online+retail#
 data_table = pd.read_excel(data_path + 'Online Retail.xlsx')
 
@@ -87,8 +88,7 @@ data_table.describe()
 # ***************************************************
 # <editor-fold desc="Data Cleaning & Feature Engineering">
 # -------------------------------
-# 1. Convert Type
-data_table.dtypes
+# 1. Convert type
 data_table["InvoiceDate"] = data_table["InvoiceDate"].dt.date
 
 # -------------------------------
@@ -109,10 +109,6 @@ customers_data = data_table.groupby(['CustomerID']).agg({
 customers_data.rename(columns={'InvoiceDate': 'day_to_invoice',
                                'InvoiceNo': 'count_products',
                                'total_price': 'monetary_value'}, inplace=True)
-# ***************************************************
-# ******            Data Visualization         ******
-# ***************************************************
-
 
 # ***************************************************
 # ******  Data Preparation For Modeling        ******
@@ -130,13 +126,8 @@ customers_data_cleaned.head()
 customers_data_norm = normalizer(df=customers_data_cleaned, norm_type='StandardScaler')
 
 # ***************************************************
-# ******            Data Visualization         ******
-# ***************************************************
-
-# ***************************************************
 # ******            Modelling                  ******
 # ***************************************************
-
 # -------------------------------
 # 1. Extract optimize number of clusters based on the Elbow Method
 distortions = elbow_method(df=customers_data_norm, test_clusters=40)
@@ -147,44 +138,102 @@ clustering_model = KMeans(n_clusters=3, random_state=42)
 clustering_model.fit(customers_data_norm)
 
 customers_data_norm["cluster"] = clustering_model.labels_
+customers_data_norm["cluster_str"] = "cluster" + customers_data_norm["cluster"].astype(str)
+
+customers_data["cluster"] = clustering_model.labels_
+customers_data["cluster_str"] = "cluster" + customers_data["cluster"].astype(str)
 
 # ***************************************************
 # ******    Post-processing & Visualization    ******
 # ***************************************************
-# 1. Calculating average of each feature of the classes
-features_avg_per_class=customers_data_norm.groupby('cluster').agg({
+# -------------------------------
+# 1. Count per class/ rate of class
+cluster_count = customers_data_norm.cluster.value_counts()
+cluster_count = cluster_count.sort_index()
+
+cluster_rate = cluster_count.sort_index() / customers_data_norm.shape[0]
+cluster_rate = cluster_rate.sort_index()
+
+fig_bar_plot = make_subplots(rows=1, cols=2)
+fig_bar_plot.add_trace(
+    go.Bar(name='clusters_count', x=cluster_count.index, y=cluster_count),
+    row=1, col=1
+)
+fig_bar_plot.add_trace(
+    go.Bar(name='cluster_rate', x=cluster_rate.index, y=cluster_rate),
+    row=1, col=2
+)
+plot(fig_bar_plot)
+
+# -------------------------------
+# 2. Scatter plot of clusters and features, 2D and 3D
+# 2.A. 2D scatter plot
+fig_2D = go.Figure(data=go.Scatter(
+    x=customers_data_norm.day_to_invoice,
+    y=customers_data_norm.monetary_value,
+    mode='markers',
+    marker=dict(color=customers_data_norm.cluster, opacity=0.7, size=10)))
+plot(fig_2D)
+
+# 2.B. 3D scatter plot
+fig_3D = go.Figure(data=[go.Scatter3d(
+    x=customers_data_norm.count_products,
+    y=customers_data_norm.day_to_invoice,
+    z=customers_data_norm.monetary_value,
+    mode='markers',
+    marker=dict(
+        size=12,
+        color=customers_data_norm.cluster,
+        colorscale='Jet',
+        opacity=0.6
+    )
+)])
+fig_3D.update_layout(margin=dict(l=0, r=0, b=0, t=0),
+                     scene=dict(xaxis_title="norm count_products",
+                                yaxis_title="norm day_to_invoice",
+                                zaxis_title="norm monetary_value"))
+plot(fig_3D)
+
+# -------------------------------
+# 1. Calculating average of each feature of the classes in normalized data and original data
+# 1.A. Calculation average from normalized data
+features_avg_per_class_norm = customers_data_norm.groupby('cluster').agg({
+    'day_to_invoice': 'mean',
+    'count_products': 'mean',
+    'monetary_value': 'mean'}).round(2)
+# 1.B. Calculation average from original data
+features_avg_per_class_orig = customers_data.groupby('cluster').agg({
     'day_to_invoice': 'mean',
     'count_products': 'mean',
     'monetary_value': 'mean'}).round(2)
 
-fig = go.Figure(data=[
-    go.Bar(name='day_to_invoice', x=features_avg_per_class.index, y=features_avg_per_class.day_to_invoice),
-    go.Bar(name='count_products', x=features_avg_per_class.index, y=features_avg_per_class.count_products),
-    go.Bar(name='monetary_value', x=features_avg_per_class.index, y=features_avg_per_class.monetary_value)
+# 1.C. Plot features_avg_per_class_norm
+fig_bar_norm = go.Figure(data=[
+    go.Bar(name='day_to_invoice', x=features_avg_per_class_norm.index, y=features_avg_per_class_norm.day_to_invoice),
+    go.Bar(name='count_products', x=features_avg_per_class_norm.index, y=features_avg_per_class_norm.count_products),
+    go.Bar(name='monetary_value', x=features_avg_per_class_norm.index, y=features_avg_per_class_norm.monetary_value)
 ])
-fig.update_layout(barmode='group')
-plot(fig)
+fig_bar_norm.update_layout(barmode='group')
+plot(fig_bar_norm)
 
+# 1.D. Plot features_avg_per_class_orig
+fig_bar_orig = go.Figure(data=[
+    go.Bar(name='day_to_invoice', x=features_avg_per_class_orig.index, y=features_avg_per_class_orig.day_to_invoice),
+    go.Bar(name='count_products', x=features_avg_per_class_orig.index, y=features_avg_per_class_orig.count_products),
+    go.Bar(name='monetary_value', x=features_avg_per_class_orig.index, y=features_avg_per_class_orig.monetary_value)
+])
+fig_bar_orig.update_layout(barmode='group')
+plot(fig_bar_orig)
 
-features_avg_per_class=customers_data.groupby('cluster').agg({
-    'day_to_invoice': 'mean',
-    'count_products': 'mean',
-    'monetary_value': ['mean', 'count']}).round(2)
-
-
-
-# Create the dataframe
-df_normalized = pd.DataFrame(customers_data_norm, columns=['day_to_invoice', 'count_products', 'monetary_value'])
-df_normalized['customer_id'] = customers_data.index
-df_normalized['cluster'] = clustering_model.labels_
-# Melt The Data
-df_nor_melt = pd.melt(df_normalized.reset_index(),
-                      id_vars=['customer_id', 'cluster'],
-                      value_vars=['day_to_invoice', 'count_products', 'monetary_value'],
-                      var_name='Attribute',
-                      value_name='Value')
-df_nor_melt.head()
-# Visualize it
-sns.lineplot('Attribute', 'Value', hue='cluster', data=df_nor_melt)
+# -------------------------------
+# 2. Calculating average of each feature of the classes in normalized data and original data
+# 2.A. Melting data
+customers_data_norm_melt = pd.melt(customers_data_norm.reset_index(),
+                                   id_vars=['index', 'cluster'],
+                                   value_vars=['day_to_invoice', 'count_products', 'monetary_value'],
+                                   var_name='feature',
+                                   value_name='value')
+# 2.B. Visualize melted data
+sns.lineplot('feature', 'value', hue='cluster', data=customers_data_norm_melt)
 
 # </editor-fold>
