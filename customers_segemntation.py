@@ -7,11 +7,13 @@ import datetime
 from scipy import stats
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.cluster import KMeans
-import matplotlib.pyplot as plt
 import seaborn as sns
 from plotly.offline import plot
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import plotly.express as px
+from pycountry_convert import country_name_to_country_alpha3
+from yellowbrick.cluster.elbow import kelbow_visualizer
 
 
 ##################################################################
@@ -33,41 +35,17 @@ def normalizer(df, norm_type='StandardScaler'):
     df_normalized.index = df.index
     return df_normalized
 
-
-# ***************************************************
-# ******          elbow_method Function        ******
-# ***************************************************
-def elbow_method(df, test_clusters=10):
-    distortions = []
-    classes = range(1, test_clusters)
-    for num_class in classes:
-        kmeans_model = KMeans(n_clusters=num_class, random_state=100)
-        kmeans_model.fit(df)
-        distortions.append(kmeans_model.inertia_)
-
-    plt.title('The elbow method for optimal number of classes')
-    plt.xlabel('num_class')
-    plt.ylabel('Distortion')
-    plt.plot(classes, distortions, 'bo-')
-    plt.show()
-
-    return distortions
-
 ##################################################################
 #                      Main Area                                 #
 ##################################################################
-# ***************************************************
-# ******       Instant Variables Setting       ******
-# ***************************************************
-data_path = 'data/'
 
 # ***************************************************
 # ******            Load Data                  ******
 # ***************************************************
 # -------------------------------
 # 1. Load data
-# https://archive.ics.uci.edu/ml/datasets/online+retail#
-data_table = pd.read_excel(data_path + 'Online Retail.xlsx')
+data_url= 'https://archive.ics.uci.edu/ml/machine-learning-databases/00352/Online%20Retail.xlsx'
+data_table = pd.read_excel(data_url)
 
 # -------------------------------
 # 2. Sample of the data table
@@ -82,14 +60,14 @@ data_table.describe()
 # ***************************************************
 # -------------------------------
 # 1. Convert type
-data_table["InvoiceDate"] = data_table["InvoiceDate"].dt.date
+data_table['InvoiceDate'] = data_table['InvoiceDate'].dt.date
 
 # -------------------------------
 # 2. Create new feature: total_price
-data_table["total_price"] = data_table["Quantity"] * data_table["UnitPrice"]
+data_table['total_price'] = data_table['Quantity'] * data_table['UnitPrice']
 
 # -------------------------------
-# 3. Create date variable that records recency
+# 3. Calculate RFM parameters
 snapshot_date = max(data_table.InvoiceDate) + datetime.timedelta(days=1)
 # 3.A. Aggregate data by each customer
 customers_data = data_table.groupby(['CustomerID']).agg({
@@ -97,20 +75,50 @@ customers_data = data_table.groupby(['CustomerID']).agg({
     'InvoiceNo': 'count',
     'total_price': 'sum'})
 # 3.B. Rename columns
-customers_data.rename(columns={'InvoiceDate': 'day_to_invoice',
-                               'InvoiceNo': 'count_products',
-                               'total_price': 'monetary_value'}, inplace=True)
+customers_data.rename(columns={'InvoiceDate': 'recency',
+                               'InvoiceNo': 'frequency',
+                               'total_price': 'monetary'}, inplace=True)
+
+# ***************************************************
+# ******                Visualization          ******
+# ***************************************************
+count_country = pd.DataFrame(data_table.Country.value_counts())
+count_country = count_country.reset_index()
+count_country.columns = ['country', 'count']
+count_country['country'].replace({'EIRE': 'Ireland', 'Channel Islands': 'United Kingdom', 'RSA': 'South Africa'},
+                                 inplace=True)
+count_country = count_country.loc[~count_country.country.isin(['Unspecified', 'European Community']), :]
+count_country['country_alpha_3'] = count_country.country.apply(lambda x: country_name_to_country_alpha3(x))
+
+fig = px.choropleth(count_country, locations='country_alpha_3', color='count',
+                    hover_name='country', color_continuous_scale=px.colors.sequential.Plasma)
+plot(fig)
+
 
 # ***************************************************
 # ******  Data Preparation For Modeling        ******
 # ***************************************************
 # -------------------------------
 # 1. Skewness check
+fig = make_subplots(rows=1, cols=3)
+fig.add_trace(go.Box(y=customers_data.recency, name='recency'), row=1, col=1)
+fig.add_trace(go.Box(y=customers_data.frequency, name='frequency'), row=1, col=2)
+fig.add_trace(go.Box(y=customers_data.monetary, name='monetary'), row=1, col=3)
+fig.update_layout(yaxis_title='Value')
+plot(fig)
+
 customers_data_cleaned = pd.DataFrame()
-customers_data_cleaned["day_to_invoice"] = stats.boxcox(customers_data['day_to_invoice'])[0]
-customers_data_cleaned["count_products"] = stats.boxcox(customers_data['count_products'])[0]
-customers_data_cleaned["monetary_value"] = pd.Series(np.cbrt(customers_data['monetary_value'])).values
-customers_data_cleaned.head()
+customers_data_cleaned['recency'] = stats.boxcox(customers_data['recency'])[0]
+customers_data_cleaned['frequency'] = stats.boxcox(customers_data['frequency'])[0]
+customers_data_cleaned['monetary'] = pd.Series(np.cbrt(customers_data['monetary'])).values
+
+
+fig = make_subplots(rows=1, cols=3)
+fig.add_trace(go.Box(y=customers_data_cleaned.recency, name='recency'), row=1, col=1)
+fig.add_trace(go.Box(y=customers_data_cleaned.frequency, name='frequency'), row=1, col=2)
+fig.add_trace(go.Box(y=customers_data_cleaned.monetary, name='monetary'), row=1, col=3)
+fig.update_layout(yaxis_title='Value')
+plot(fig)
 
 # -------------------------------
 # 2. Normalization
@@ -119,20 +127,21 @@ customers_data_norm = normalizer(df=customers_data_cleaned, norm_type='StandardS
 # ***************************************************
 # ******            Modelling                  ******
 # ***************************************************
+
 # -------------------------------
 # 1. Extract optimize number of clusters based on the Elbow Method
-distortions = elbow_method(df=customers_data_norm, test_clusters=40)
+kelbow_visualizer(KMeans(random_state=4), customers_data_norm, k=(2,10))
 
 # -------------------------------
 # 2. Apply clustering model
-clustering_model = KMeans(n_clusters=3, random_state=42)
+clustering_model = KMeans(n_clusters=5, random_state=42)
 clustering_model.fit(customers_data_norm)
 
-customers_data_norm["cluster"] = clustering_model.labels_
-customers_data_norm["cluster_str"] = "cluster" + customers_data_norm["cluster"].astype(str)
+customers_data_norm['cluster'] = clustering_model.labels_
+customers_data_norm['cluster_str'] = 'cluster' + customers_data_norm['cluster'].astype(str)
 
-customers_data["cluster"] = clustering_model.labels_
-customers_data["cluster_str"] = "cluster" + customers_data["cluster"].astype(str)
+customers_data['cluster'] = clustering_model.labels_
+customers_data['cluster_str'] = 'cluster' + customers_data['cluster'].astype(str)
 
 # ***************************************************
 # ******    Post-processing & Visualization    ******
@@ -160,17 +169,24 @@ plot(fig_bar_plot)
 # 2. Scatter plot of clusters and features, 2D and 3D
 # 2.A. 2D scatter plot
 fig_2D = go.Figure(data=go.Scatter(
-    x=customers_data_norm.day_to_invoice,
-    y=customers_data_norm.monetary_value,
+    x=customers_data_norm.recency,
+    y=customers_data_norm.monetary,
     mode='markers',
     marker=dict(color=customers_data_norm.cluster, opacity=0.7, size=10)))
+fig_2D.update_layout(
+    title="2D Scatter plot of the Classes ",
+    xaxis_title="recency",
+    yaxis_title="monetary"
+
+)
+
 plot(fig_2D)
 
 # 2.B. 3D scatter plot
 fig_3D = go.Figure(data=[go.Scatter3d(
-    x=customers_data_norm.count_products,
-    y=customers_data_norm.day_to_invoice,
-    z=customers_data_norm.monetary_value,
+    x=customers_data_norm.frequency,
+    y=customers_data_norm.recency,
+    z=customers_data_norm.monetary,
     mode='markers',
     marker=dict(
         size=12,
@@ -180,38 +196,38 @@ fig_3D = go.Figure(data=[go.Scatter3d(
     )
 )])
 fig_3D.update_layout(margin=dict(l=0, r=0, b=0, t=0),
-                     scene=dict(xaxis_title="norm count_products",
-                                yaxis_title="norm day_to_invoice",
-                                zaxis_title="norm monetary_value"))
+                     scene=dict(xaxis_title='norm frequency',
+                                yaxis_title='norm recency',
+                                zaxis_title='norm monetary'))
 plot(fig_3D)
 
 # -------------------------------
 # 1. Calculating average of each feature of the classes in normalized data and original data
 # 1.A. Calculation average from normalized data
 features_avg_per_class_norm = customers_data_norm.groupby('cluster').agg({
-    'day_to_invoice': 'mean',
-    'count_products': 'mean',
-    'monetary_value': 'mean'}).round(2)
+    'recency': 'mean',
+    'frequency': 'mean',
+    'monetary': 'mean'}).round(2)
 # 1.B. Calculation average from original data
 features_avg_per_class_orig = customers_data.groupby('cluster').agg({
-    'day_to_invoice': 'mean',
-    'count_products': 'mean',
-    'monetary_value': 'mean'}).round(2)
+    'recency': 'mean',
+    'frequency': 'mean',
+    'monetary': 'mean'}).round(2)
 
 # 1.C. Plot features_avg_per_class_norm
 fig_bar_norm = go.Figure(data=[
-    go.Bar(name='day_to_invoice', x=features_avg_per_class_norm.index, y=features_avg_per_class_norm.day_to_invoice),
-    go.Bar(name='count_products', x=features_avg_per_class_norm.index, y=features_avg_per_class_norm.count_products),
-    go.Bar(name='monetary_value', x=features_avg_per_class_norm.index, y=features_avg_per_class_norm.monetary_value)
+    go.Bar(name='recency', x=features_avg_per_class_norm.index, y=features_avg_per_class_norm.recency),
+    go.Bar(name='frequency', x=features_avg_per_class_norm.index, y=features_avg_per_class_norm.frequency),
+    go.Bar(name='monetary', x=features_avg_per_class_norm.index, y=features_avg_per_class_norm.monetary)
 ])
 fig_bar_norm.update_layout(barmode='group')
 plot(fig_bar_norm)
 
 # 1.D. Plot features_avg_per_class_orig
 fig_bar_orig = go.Figure(data=[
-    go.Bar(name='day_to_invoice', x=features_avg_per_class_orig.index, y=features_avg_per_class_orig.day_to_invoice),
-    go.Bar(name='count_products', x=features_avg_per_class_orig.index, y=features_avg_per_class_orig.count_products),
-    go.Bar(name='monetary_value', x=features_avg_per_class_orig.index, y=features_avg_per_class_orig.monetary_value)
+    go.Bar(name='recency', x=features_avg_per_class_orig.index, y=features_avg_per_class_orig.recency),
+    go.Bar(name='frequency', x=features_avg_per_class_orig.index, y=features_avg_per_class_orig.frequency),
+    go.Bar(name='monetary', x=features_avg_per_class_orig.index, y=features_avg_per_class_orig.monetary)
 ])
 fig_bar_orig.update_layout(barmode='group')
 plot(fig_bar_orig)
@@ -221,7 +237,7 @@ plot(fig_bar_orig)
 # 2.A. Melting data
 customers_data_norm_melt = pd.melt(customers_data_norm.reset_index(),
                                    id_vars=['index', 'cluster'],
-                                   value_vars=['day_to_invoice', 'count_products', 'monetary_value'],
+                                   value_vars=['recency', 'frequency', 'monetary'],
                                    var_name='feature',
                                    value_name='value')
 # 2.B. Visualize melted data
